@@ -143,7 +143,7 @@ jobs:
 
               // список пісень і їхні назви - грають по черзі по колу
               private val songs = listOf(R.raw.song, R.raw.song2, R.raw.song3)
-              private val songNames = listOf("Track 1", "Track 2", "Track 3")  // замініть на свої назви
+              private val songNames = listOf("харакири", "винтовка", "убивать")  // замініть на свої назви
               private var songIndex = 0
 
               private val volObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
