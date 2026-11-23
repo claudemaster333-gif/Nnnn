@@ -1,0 +1,378 @@
+name: Build Letov APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create project
+        run: |
+          set -e
+          [ -f song.mp3 ] || { echo "Upload song.mp3 to the repo root"; exit 1; }
+          [ -f rhcp.gif ] || { echo "Upload rhcp.gif to the repo root"; exit 1; }
+          [ -f letov.gif ] || { echo "Upload letov.gif to the repo root"; exit 1; }
+          [ -f icon.png ] || { echo "Upload icon.png to the repo root"; exit 1; }
+          P=letov/app/src/main
+          mkdir -p $P/java/com/example/letov $P/res/raw $P/res/drawable $P/assets
+          cp song.mp3 $P/res/raw/song.mp3
+          cp rhcp.gif $P/assets/rhcp.gif
+          cp letov.gif $P/assets/letov.gif
+          cp icon.png $P/res/drawable/ic_launcher.png
+          cat > letov/settings.gradle.kts <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+          rootProject.name = "rhcp"
+          include(":app")
+          EOF
+          cat > letov/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.2.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+          }
+          EOF
+          cat > letov/gradle.properties <<'EOF'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2g
+          EOF
+          cat > letov/app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.example.letov"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.example.letov"
+                  minSdk = 24
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          dependencies {
+              implementation("androidx.appcompat:appcompat:1.6.1")
+          }
+          EOF
+          cat > $P/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="false"
+                  android:icon="@drawable/ic_launcher"
+                  android:label="RHCP fan club"
+                  android:theme="@style/Theme.AppCompat.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+          cat > $P/java/com/example/letov/MainActivity.kt <<'EOF'
+          package com.example.letov
+
+          import android.content.Context
+          import android.database.ContentObserver
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.media.AudioManager
+          import android.media.MediaPlayer
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.Looper
+          import android.provider.Settings
+          import android.text.Editable
+          import android.text.InputType
+          import android.text.TextWatcher
+          import android.view.Gravity
+          import android.view.View
+          import android.webkit.WebView
+          import android.widget.Button
+          import android.widget.EditText
+          import android.widget.FrameLayout
+          import android.widget.LinearLayout
+          import android.widget.ProgressBar
+          import android.widget.ScrollView
+          import android.widget.TextView
+          import android.widget.Toast
+          import androidx.activity.OnBackPressedCallback
+          import androidx.appcompat.app.AppCompatActivity
+
+          private const val REVEAL = "Плот-твіст: це Єгор Лєтов 😎"
+          private const val REVEAL_AFTER_MS = 12000L
+          private const val LOCK_MS = 70000L        // вийти можна лише після стількох мс прослуховування
+          private const val VOLUME_PERCENT = 80     // на скільки % підкручувати звук при Play
+          private const val MIN_VOLUME_PERCENT = 10 // нижче цього звук опустити не можна
+          private const val UNLOCK_CODE = "1488"    // код екстреного розблокування
+          private const val GIF_LOADING = "rhcp.gif"   // фон під час завантаження
+          private const val GIF_PLAYING = "letov.gif"  // фон, поки грає Лєтов
+          private const val LOAD_PCT_PER_SEC = 5       // скільки % завантаження за секунду
+          private const val START_AT_PERCENT = 90      // на якому % стартує Лєтов
+
+          class MainActivity : AppCompatActivity() {
+              private val hd = Handler(Looper.getMainLooper())
+              private var mp: MediaPlayer? = null
+              private var clicked = false
+              private var unlocked = false
+              private var volChanged = false
+              private var oldVol = 0
+              private lateinit var audio: AudioManager
+              private lateinit var web: WebView
+              private var observing = false
+
+              private val volObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                  override fun onChange(selfChange: Boolean) { enforceMinVolume() }
+              }
+
+              private fun enforceMinVolume() {
+                  val min = (audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC) * MIN_VOLUME_PERCENT + 99) / 100
+                  if (audio.getStreamVolume(AudioManager.STREAM_MUSIC) < min) {
+                      runCatching { audio.setStreamVolume(AudioManager.STREAM_MUSIC, min, 0) }
+                      volChanged = true
+                  }
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                  oldVol = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+                  val d = resources.displayMetrics.density
+                  fun dp(v: Int) = (v * d).toInt()
+
+                  val frame = FrameLayout(this).apply { setBackgroundColor(Color.rgb(18, 18, 18)) }
+
+                  // гіфка на фоні
+                  web = WebView(this).apply {
+                      setBackgroundColor(Color.BLACK)
+                      isClickable = false
+                      isFocusable = false
+                      isVerticalScrollBarEnabled = false
+                      isHorizontalScrollBarEnabled = false
+                      visibility = View.GONE
+                  }
+                  frame.addView(web, FrameLayout.LayoutParams(-1, -1))
+
+                  val scroll = ScrollView(this).apply { isFillViewport = true }
+                  frame.addView(scroll, FrameLayout.LayoutParams(-1, -1))
+
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER
+                      setPadding(dp(24), dp(24), dp(24), dp(24))
+                  }
+                  scroll.addView(root, FrameLayout.LayoutParams(-1, -2))
+
+                  val cover = TextView(this).apply {
+                      text = "RHCP"
+                      textSize = 44f
+                      typeface = Typeface.DEFAULT_BOLD
+                      gravity = Gravity.CENTER
+                      setTextColor(Color.WHITE)
+                      setBackgroundColor(Color.rgb(200, 30, 30))
+                  }
+                  root.addView(cover, LinearLayout.LayoutParams(dp(240), dp(240)))
+
+                  val title = TextView(this).apply {
+                      text = "Red Hot Chili Peppers"
+                      textSize = 22f
+                      typeface = Typeface.DEFAULT_BOLD
+                      gravity = Gravity.CENTER
+                      setTextColor(Color.WHITE)
+                  }
+                  root.addView(title, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(20) })
+
+                  val sub = TextView(this).apply {
+                      text = "Unreleased demo · LEAKED"
+                      textSize = 15f
+                      gravity = Gravity.CENTER
+                      setTextColor(Color.rgb(200, 200, 200))
+                  }
+                  root.addView(sub, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+
+                  val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                      max = 1000
+                      progress = 0
+                  }
+                  root.addView(bar, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) })
+
+                  val status = TextView(this).apply {
+                      text = "Tap play to listen"
+                      textSize = 16f
+                      gravity = Gravity.CENTER
+                      setTextColor(Color.WHITE)
+                  }
+                  root.addView(status, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+
+                  val timer = TextView(this).apply {
+                      text = ""
+                      textSize = 14f
+                      gravity = Gravity.CENTER
+                      setTextColor(Color.rgb(200, 200, 200))
+                  }
+                  root.addView(timer, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+
+                  val btn = Button(this).apply { text = "▶  PLAY" }
+                  root.addView(btn, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(20) })
+
+                  // поле для коду екстреного розблокування
+                  val codeField = EditText(this).apply {
+                      hint = "Код розблокування"
+                      inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+                      gravity = Gravity.CENTER
+                      textSize = 16f
+                      setTextColor(Color.WHITE)
+                      setHintTextColor(Color.rgb(170, 170, 170))
+                  }
+                  root.addView(codeField, LinearLayout.LayoutParams(dp(220), -2).apply {
+                      topMargin = dp(20)
+                      gravity = Gravity.CENTER_HORIZONTAL
+                  })
+                  codeField.addTextChangedListener(object : TextWatcher {
+                      override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+                      override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
+                      override fun afterTextChanged(s: Editable?) {
+                          val t = s?.toString() ?: return
+                          if (t == UNLOCK_CODE) {
+                              finish()
+                          } else if (t.length >= UNLOCK_CODE.length) {
+                              Toast.makeText(this@MainActivity, "Невірний код", Toast.LENGTH_SHORT).show()
+                              s.clear()
+                          }
+                      }
+                  })
+
+                  setContentView(frame)
+
+                  // "Назад" працює лише до натискання Play і після розблокування
+                  onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+                      override fun handleOnBackPressed() {
+                          if (!clicked || unlocked) finish()
+                          else Toast.makeText(this@MainActivity, "Ще не час 😏", Toast.LENGTH_SHORT).show()
+                      }
+                  })
+
+                  val tick = object : Runnable {
+                      override fun run() {
+                          val m = mp ?: return
+                          runCatching {
+                              if (m.duration > 0) bar.progress = m.currentPosition * 1000 / m.duration
+                              val left = ((LOCK_MS - m.currentPosition) / 1000).coerceAtLeast(0)
+                              if (left > 0) {
+                                  timer.text = "🔒 Вихід через ${left / 60}:${"%02d".format(left % 60)}"
+                              } else {
+                                  unlocked = true
+                                  timer.text = "🔓 Можна виходити"
+                              }
+                          }
+                          hd.postDelayed(this, 500)
+                      }
+                  }
+
+                  fun showGif(name: String) {
+                      val html = "<html><body style='margin:0;background:#000'>" +
+                          "<img src='$name' style='width:100vw;height:100vh;object-fit:cover'>" +
+                          "</body></html>"
+                      web.loadDataWithBaseURL("file:///android_asset/", html, "text/html", "utf-8", null)
+                      web.visibility = View.VISIBLE
+                      root.setBackgroundColor(Color.argb(120, 0, 0, 0))   // затемнення, щоб текст читався
+                  }
+
+                  fun startSong() {
+                      mp = MediaPlayer.create(this, R.raw.song)?.apply {
+                          setOnCompletionListener { status.text = "The end"; unlocked = true; timer.text = "🔓 Можна виходити" }
+                          start()
+                      }
+                      if (mp == null) unlocked = true   // якщо файл не заграв - не лишаємо в пастці
+                      status.text = "Now playing"
+                      showGif(GIF_PLAYING)
+                      tick.run()
+                      hd.postDelayed({ status.text = REVEAL }, REVEAL_AFTER_MS)
+                  }
+
+                  btn.setOnClickListener {
+                      if (clicked) return@setOnClickListener
+                      clicked = true
+                      btn.isEnabled = false
+                      // підкручуємо звук (лише вгору), старий рівень повернемо на виході
+                      val target = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC) * VOLUME_PERCENT / 100
+                      if (audio.getStreamVolume(AudioManager.STREAM_MUSIC) < target) {
+                          audio.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+                          volChanged = true
+                      }
+                      showGif(GIF_LOADING)
+                      timer.text = "🔒 Вихід через ${LOCK_MS / 60000}:${"%02d".format((LOCK_MS / 1000) % 60)}"
+                      status.text = "Loading leaked demo… 0%"
+
+                      // завантаження: +5% за секунду, на 90% стартує Лєтов
+                      var pct = 0
+                      val load = object : Runnable {
+                          override fun run() {
+                              pct += LOAD_PCT_PER_SEC
+                              if (pct >= START_AT_PERCENT) {
+                                  status.text = "Loading leaked demo… $START_AT_PERCENT%"
+                                  startSong()
+                              } else {
+                                  status.text = "Loading leaked demo… $pct%"
+                                  hd.postDelayed(this, 1000)
+                              }
+                          }
+                      }
+                      hd.postDelayed(load, 1000)
+                  }
+              }
+
+              // мінімум гучності діє, поки додаток на екрані
+              override fun onResume() {
+                  super.onResume()
+                  if (!observing) {
+                      contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, volObserver)
+                      observing = true
+                  }
+                  enforceMinVolume()
+              }
+
+              override fun onPause() {
+                  if (observing) {
+                      contentResolver.unregisterContentObserver(volObserver)
+                      observing = false
+                  }
+                  super.onPause()
+              }
+
+              override fun onDestroy() {
+                  hd.removeCallbacksAndMessages(null)
+                  mp?.release()
+                  mp = null
+                  runCatching { web.destroy() }
+                  if (volChanged) runCatching { audio.setStreamVolume(AudioManager.STREAM_MUSIC, oldVol, 0) }
+                  super.onDestroy()
+              }
+          }
+          EOF
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.5
+      - run: gradle assembleDebug
+        working-directory: letov
+      - uses: actions/upload-artifact@v4
+        with:
+          name: letov-apk
+          path: letov/app/build/outputs/apk/debug/app-debug.apk
