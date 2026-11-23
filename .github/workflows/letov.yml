@@ -120,15 +120,15 @@ jobs:
           private const val TROLL_TITLE = "Заракірі"
           private const val TROLL_TOP = "хахахахааххп забайтив, слухай Лєтова"
           private const val REVEAL_AFTER_MS = 18000L
-          private const val LOCK_MS = 90000L             // 1:30 прослуховування перед розблокуванням
-          private const val VOLUME_PERCENT = 80          // звук при Play без навушників
-          private const val HEADPHONES_PERCENT = 30      // звук при Play у навушниках
-          private const val MIN_VOLUME_PERCENT = 10      // нижче цього звук опустити не можна
-          private const val UNLOCK_CODE = "1488"         // код екстреного розблокування
-          private const val GIF_LOADING = "rhcp.gif"     // фон під час завантаження
-          private const val GIF_PLAYING = "letov.gif"    // фон, поки грає Лєтов
-          private const val LOAD_PCT_PER_SEC = 5         // скільки % завантаження за секунду
-          private const val START_AT_PERCENT = 90        // на якому % стартує Лєтов
+          private const val LOCK_MS = 90000L
+          private const val VOLUME_PERCENT = 80
+          private const val HEADPHONES_PERCENT = 30
+          private const val MIN_VOLUME_PERCENT = 10
+          private const val UNLOCK_CODE = "1488"
+          private const val GIF_LOADING = "rhcp.gif"
+          private const val GIF_PLAYING = "letov.gif"
+          private const val LOAD_PCT_PER_SEC = 5
+          private const val START_AT_PERCENT = 90
 
           class MainActivity : AppCompatActivity() {
               private val hd = Handler(Looper.getMainLooper())
@@ -434,4 +434,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: letov-apk
-          path: letov/app/build/outputs/apk/debug/app-debug.ap
+          path: letov/app/build/outputs/apk/debug/app-debug.apk
