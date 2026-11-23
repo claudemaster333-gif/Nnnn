@@ -141,9 +141,8 @@ jobs:
               private lateinit var web: WebView
               private var observing = false
 
-              // список пісень і їхні назви - грають по черзі по колу
               private val songs = listOf(R.raw.song, R.raw.song2, R.raw.song3)
-              private val songNames = listOf("харакири", "винтовка", "убивать")  // замініть на свої назви
+              private val songNames = listOf("Харакири", "Винтовка", "Убивать")
               private var songIndex = 0
 
               private val volObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -230,7 +229,6 @@ jobs:
                   }
                   root.addView(sub, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
 
-                  // назва треку, що зараз грає - з'являється разом зі стартом пісні
                   val nowPlaying = TextView(this).apply {
                       text = ""
                       textSize = 16f
@@ -328,7 +326,6 @@ jobs:
                       root.setBackgroundColor(Color.argb(120, 0, 0, 0))
                   }
 
-                  // грає наступну пісню зі списку і одразу показує її назву
                   fun playNextSong() {
                       mp?.release()
                       val i = songIndex % songs.size
@@ -434,9 +431,7 @@ jobs:
           gradle-version: 8.5
       - run: gradle assembleDebug
         working-directory: letov
-           - run: gradle assembleDebug
-        working-directory: letov
       - uses: actions/upload-artifact@v4
         with:
           name: letov-apk
-          path: letov/app/build/outputs/apk/debug/app-debug.apk
+          path: letov/app/build/outputs/apk/debug/app-debug.ap
